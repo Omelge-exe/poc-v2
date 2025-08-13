@@ -5,17 +5,72 @@ import { io, Socket } from "socket.io-client";
 import { Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
-const URL = "https://poc-v2-19ly.vercel.app/";
-// const URL="http://localhost:3000"
+// const URL = "https://poc-v2-19ly.vercel.app/";
+const URL="http://localhost:3000"
+
+// ---- Types for onboarding meta ----
+type ExpBucket = 0 | 1 | 2 | 3;
+type Meta = {
+  profile: {
+    years?: number;
+    expBucket?: ExpBucket;
+    industry: string;
+    country: string;
+    skills: string[];
+  };
+  prefs: {
+    strict?: boolean;
+    minExpBucket?: ExpBucket;
+    industries?: string[];
+    countries?: string[];
+    subdomains?: string[];
+  };
+};
+
+function toExpBucket(years: number): ExpBucket {
+  if (years <= 2) return 0;
+  if (years <= 5) return 1;
+  if (years <= 10) return 2;
+  return 3;
+}
+function normalizeMeta(raw: any): Meta {
+  const prev = {
+    profile: { expBucket: 0 as ExpBucket, industry: "OTH", country: "US", skills: [] as string[] },
+    prefs:   { strict: false, industries: [] as string[], countries: [] as string[], subdomains: [] as string[] }
+  };
+  const r = raw ?? {};
+  const years = r.profile?.years;
+  const expBucket = (r.profile?.expBucket ?? (typeof years === "number" ? toExpBucket(years) : prev.profile.expBucket)) as ExpBucket;
+
+  return {
+    profile: {
+      expBucket,
+      industry: (r.profile?.industry ?? prev.profile.industry).toUpperCase(),
+      country:  (r.profile?.country  ?? prev.profile.country).toUpperCase(),
+      skills:   Array.isArray(r.profile?.skills)
+        ? [...new Set((r.profile.skills as string[]).map((s) => s.trim().toLowerCase()))].slice(0, 15)
+        : prev.profile.skills,
+    },
+    prefs: {
+      strict: !!(r.prefs?.strict ?? prev.prefs.strict),
+      minExpBucket: r.prefs?.minExpBucket as ExpBucket | undefined,
+      industries: Array.isArray(r.prefs?.industries) ? r.prefs.industries.map((x: string) => x.toUpperCase()) : prev.prefs.industries,
+      countries:  Array.isArray(r.prefs?.countries)  ? r.prefs.countries.map((x: string) => x.toUpperCase())  : prev.prefs.countries,
+      subdomains: Array.isArray(r.prefs?.subdomains) ? r.prefs.subdomains : prev.prefs.subdomains,
+    }
+  };
+}
 
 export default function Room({
   name,
   localAudioTrack,
   localVideoTrack,
+  meta, // NEW (optional) – if not provided, we’ll read from localStorage
 }: {
   name: string;
   localAudioTrack: MediaStreamTrack | null;
   localVideoTrack: MediaStreamTrack | null;
+  meta?: Meta;
 }) {
   const router = useRouter();
 
@@ -166,8 +221,21 @@ export default function Room({
 
     s.on("connect", () => {
       if (!joinedRef.current) {
-        // s.emit("join-room", { name });
         joinedRef.current = true;
+
+        // ---- send onboarding meta (prop has priority, else localStorage) ----
+        let rawMeta: any = meta ?? null;
+        if (!rawMeta) {
+          try {
+            rawMeta = JSON.parse(localStorage.getItem("devmatch.onboarding") || "null");
+          } catch {}
+        }
+        const m = normalizeMeta(rawMeta);
+        s.emit("onboard:meta", m);
+
+        // ---- immediately queue for a match ----
+        s.emit("queue:next");
+        setStatus("Searching for the best match…");
       }
     });
 
@@ -308,7 +376,8 @@ export default function Room({
       // Only detach the preview element to avoid leaks.
       detachLocalPreview();
     };
-  }, [name, localAudioTrack, localVideoTrack]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [name, localAudioTrack, localVideoTrack, meta]);
 
   // --- Actions --------------------------------------------------------------
 
