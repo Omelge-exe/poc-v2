@@ -242,5 +242,96 @@ export class UserManager {
             this.handleLeave(socket.id, "disconnect");
             this.online.delete(socket.id);
         });
+
+        // Media state synchronization
+        socket.on("media-state", ({ roomId, micOn, camOn }: { roomId: string; micOn: boolean; camOn: boolean }) => {
+            console.log(`Media state from ${socket.id}:`, { roomId, micOn, camOn });
+            const partnerId = this.partnerOf.get(socket.id);
+            if (partnerId) {
+                const partnerUser = this.users.find(u => u.socket.id === partnerId);
+                if (partnerUser && this.online.has(partnerId)) {
+                    console.log(`Forwarding media state to partner ${partnerId}:`, { micOn, camOn });
+                    partnerUser.socket.emit("remote:media-state", { micOn, camOn });
+                } else {
+                    console.log(`Partner ${partnerId} not found or offline`);
+                }
+            } else {
+                console.log(`No partner found for ${socket.id}`);
+            }
+        });
+
+        // Screen state synchronization
+        socket.on("screen:state", ({ roomId, on }: { roomId: string; on: boolean }) => {
+            console.log(`Screen state from ${socket.id}:`, { roomId, on });
+            const partnerId = this.partnerOf.get(socket.id);
+            if (partnerId) {
+                const partnerUser = this.users.find(u => u.socket.id === partnerId);
+                if (partnerUser && this.online.has(partnerId)) {
+                    console.log(`Forwarding screen state to partner ${partnerId}:`, { on });
+                    partnerUser.socket.emit("remote:screen-state", { on });
+                } else {
+                    console.log(`Partner ${partnerId} not found or offline for screen state`);
+                }
+            } else {
+                console.log(`No partner found for screen state from ${socket.id}`);
+            }
+        });
+
+        // Chat handlers
+        socket.on("chat:join", ({ roomId, name }: { roomId: string; name: string }) => {
+            console.log(`Chat join request from ${socket.id} for room ${roomId} with name ${name}`);
+            // Just acknowledge - in a peer-to-peer room, both users are automatically in chat
+            socket.emit("chat:system", { text: "Chat connected", ts: Date.now() });
+            
+            // Notify partner that user joined chat (optional)
+            const partnerId = this.partnerOf.get(socket.id);
+            if (partnerId) {
+                const partnerUser = this.users.find(u => u.socket.id === partnerId);
+                if (partnerUser && this.online.has(partnerId)) {
+                    console.log(`Notifying partner ${partnerId} that ${name} joined chat`);
+                }
+            }
+        });
+
+        socket.on("chat:message", ({ roomId, text, from, clientId, ts }: { 
+            roomId: string; 
+            text: string; 
+            from: string; 
+            clientId: string; 
+            ts: number 
+        }) => {
+            console.log(`Chat message from ${socket.id} (${from}):`, { roomId, text: text.substring(0, 50) + '...', clientId });
+            const partnerId = this.partnerOf.get(socket.id);
+            if (partnerId && text && text.length <= 1000) {
+                const partnerUser = this.users.find(u => u.socket.id === partnerId);
+                if (partnerUser && this.online.has(partnerId)) {
+                    console.log(`Forwarding message to partner ${partnerId}`);
+                    partnerUser.socket.emit("chat:message", { text, from, clientId, ts });
+                } else {
+                    console.log(`Partner ${partnerId} not found or offline for message forwarding`);
+                }
+            } else {
+                console.log(`Message not forwarded - no partner or invalid text length`, { 
+                    hasPartner: !!partnerId, 
+                    textLength: text?.length 
+                });
+            }
+        });
+
+        socket.on("chat:typing", ({ roomId, from, typing }: { roomId: string; from: string; typing: boolean }) => {
+            console.log(`Typing status from ${socket.id} (${from}):`, { roomId, typing });
+            const partnerId = this.partnerOf.get(socket.id);
+            if (partnerId) {
+                const partnerUser = this.users.find(u => u.socket.id === partnerId);
+                if (partnerUser && this.online.has(partnerId)) {
+                    console.log(`Forwarding typing status to partner ${partnerId}:`, { from, typing });
+                    partnerUser.socket.emit("chat:typing", { from, typing });
+                } else {
+                    console.log(`Partner ${partnerId} not found or offline for typing status`);
+                }
+            } else {
+                console.log(`No partner found for typing status from ${socket.id}`);
+            }
+        });
     }
 }
